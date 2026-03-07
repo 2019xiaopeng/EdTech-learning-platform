@@ -1,33 +1,81 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { BookOpen, MessageCircle, Target, ArrowLeft, Loader2, Send } from "lucide-react";
+import { BookOpen, MessageCircle, Target, ArrowLeft, Loader2, Send, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { askAI, generateSimilarQuestions, generateKnowledgeExplanation } from "@/services/api";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { InsightKind } from "@/types";
+
+function formatQuestionForDisplay(input: string) {
+  const lines = input
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return input;
+  }
+  const optionPattern = /^([A-HＡ-Ｈ])[\.\、\．\)]\s*(.+)$/;
+  const options = lines
+    .map((line) => {
+      const matched = line.match(optionPattern);
+      if (!matched) {
+        return null;
+      }
+      return { label: matched[1].toUpperCase(), text: matched[2] };
+    })
+    .filter((item): item is { label: string; text: string } => item !== null);
+  if (options.length >= 2) {
+    const firstOptionLine = lines.findIndex((line) => optionPattern.test(line));
+    const stem = firstOptionLine > 0 ? lines.slice(0, firstOptionLine).join("\n\n") : "";
+    const optionsMd = options.map((item) => `- **${item.label}.** ${item.text}`).join("\n");
+    return [stem, optionsMd].filter(Boolean).join("\n\n");
+  }
+  return lines.join("\n\n");
+}
 
 export default function Workspace() {
   const params = useParams();
   const id = params?.id as string;
   const router = useRouter();
-  const { papers, activeQuestionId, setActiveQuestion, setActivePaper, chatHistory, appendChatMessage } = useWorkspaceStore();
+  const {
+    papers,
+    setActiveQuestion,
+    setActivePaper,
+    getActiveQuestionId,
+    chatHistory,
+    appendChatMessage,
+    setInsightCache,
+    getInsightCache,
+  } = useWorkspaceStore();
   const paper = papers[id || ""];
+  const activeQuestionId = getActiveQuestionId(id);
 
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [isAiTyping, setIsAiTyping] = useState(false);
-  
-  const [dialogContent, setDialogContent] = useState<{ title: string; content: string } | null>(null);
-  const [isDialogLoading, setIsDialogLoading] = useState(false);
+  const [activeInsightTab, setActiveInsightTab] = useState<InsightKind | null>(null);
+  const [insightLoading, setInsightLoading] = useState<Record<InsightKind, boolean>>({
+    knowledge: false,
+    similar: false,
+  });
+  const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 });
+
+  const insightControllersRef = useRef<Record<InsightKind, AbortController | null>>({
+    knowledge: null,
+    similar: null,
+  });
+  const chatControllerRef = useRef<AbortController | null>(null);
+  const insightRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (!paper) {
@@ -40,33 +88,48 @@ export default function Workspace() {
   if (!paper) return null;
 
   const activeQuestion = paper.questions.find((q) => q.id === activeQuestionId);
-  const currentChat = activeQuestionId ? chatHistory[activeQuestionId] || [] : [];
+  const currentChat = activeQuestionId ? chatHistory[`${id}:${activeQuestionId}`] || [] : [];
+  const displayQuestionText = useMemo(
+    () => formatQuestionForDisplay(activeQuestion?.text || ""),
+    [activeQuestion?.text]
+  );
+  const displayedInsight = activeQuestion && activeInsightTab ? getInsightCache(id, activeQuestion.id, activeInsightTab) : null;
 
   const handleQuestionClick = (questionId: string) => {
-    setActiveQuestion(questionId);
+    setActiveQuestion(id, questionId);
     setIsChatOpen(false);
+    setActiveInsightTab(null);
+    Object.values(insightControllersRef.current).forEach((controller) => controller?.abort());
+    setInsightLoading({ knowledge: false, similar: false });
   };
 
   const handleSendMessage = async (text: string = chatInput) => {
     if (!text.trim() || !activeQuestion) return;
 
     const userMessage = { id: Date.now().toString(), role: "user" as const, text };
-    appendChatMessage(activeQuestion.id, userMessage);
+    const conversation = [...currentChat, userMessage];
+    appendChatMessage(id, activeQuestion.id, userMessage);
     setChatInput("");
     setIsAiTyping(true);
+    chatControllerRef.current?.abort();
+    const controller = new AbortController();
+    chatControllerRef.current = controller;
 
     try {
-      const response = await askAI(activeQuestion.text, currentChat, text);
-      appendChatMessage(activeQuestion.id, {
+      const response = await askAI(activeQuestion.text, conversation, text, controller.signal);
+      appendChatMessage(id, activeQuestion.id, {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         text: response.message,
         options: response.options,
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "对话失败，请重试。";
       toast.error(message);
-      appendChatMessage(activeQuestion.id, {
+      appendChatMessage(id, activeQuestion.id, {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         text: message,
@@ -76,35 +139,42 @@ export default function Workspace() {
     }
   };
 
-  const handleAction = async (type: "knowledge" | "similar") => {
+  const handleAction = async (type: InsightKind) => {
     if (!activeQuestion) return;
-    
-    setIsDialogLoading(true);
-    setDialogContent({ title: type === "knowledge" ? "知识点讲解" : "相似题目", content: "" });
-    
+    setActiveInsightTab(type);
+    const cached = getInsightCache(id, activeQuestion.id, type);
+    if (cached) {
+      return;
+    }
+    Object.values(insightControllersRef.current).forEach((controller) => controller?.abort());
+    const controller = new AbortController();
+    insightControllersRef.current[type] = controller;
+    const requestId = insightRequestIdRef.current + 1;
+    insightRequestIdRef.current = requestId;
+    setInsightLoading((prev) => ({ ...prev, [type]: true }));
     try {
-      const content = type === "knowledge" 
-        ? await generateKnowledgeExplanation(activeQuestion.text)
-        : await generateSimilarQuestions(activeQuestion.text);
-        
-      setDialogContent({
-        title: type === "knowledge" ? "知识点讲解" : "相似题目",
-        content,
-      });
+      const content =
+        type === "knowledge"
+          ? await generateKnowledgeExplanation(activeQuestion.text, controller.signal)
+          : await generateSimilarQuestions(activeQuestion.text, controller.signal);
+      if (requestId === insightRequestIdRef.current) {
+        setInsightCache(id, activeQuestion.id, type, content);
+      }
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "生成内容失败，请重试。";
       toast.error(message);
-      setDialogContent({
-        title: "错误",
-        content: message,
-      });
     } finally {
-      setIsDialogLoading(false);
+      if (requestId === insightRequestIdRef.current) {
+        setInsightLoading((prev) => ({ ...prev, [type]: false }));
+      }
     }
   };
 
-  const maxX = Math.max(...paper.questions.map((question) => question.box.xmax), 1000);
-  const maxY = Math.max(...paper.questions.map((question) => question.box.ymax), 1000);
+  const maxX = Math.max(imageNaturalSize.width, ...paper.questions.map((question) => question.box.xmax), 1000);
+  const maxY = Math.max(imageNaturalSize.height, ...paper.questions.map((question) => question.box.ymax), 1000);
 
   return (
     <div className="h-screen w-full flex flex-col bg-gradient-to-b from-slate-50 to-white">
@@ -125,9 +195,17 @@ export default function Workspace() {
             </CardHeader>
             <div className="flex-1 relative overflow-auto bg-slate-200/50 p-4 flex items-center justify-center">
               <div className="relative inline-block shadow-md bg-white">
-                <img src={paper.imageUrl} alt="Paper" className="max-w-full h-auto block" />
-                
-                {/* Render Bounding Boxes */}
+                <img
+                  src={paper.imageUrl}
+                  alt="Paper"
+                  className="max-w-full h-auto block"
+                  onLoad={(event) =>
+                    setImageNaturalSize({
+                      width: event.currentTarget.naturalWidth || 0,
+                      height: event.currentTarget.naturalHeight || 0,
+                    })
+                  }
+                />
                 {paper.questions.map((q) => {
                   const isActive = q.id === activeQuestionId;
                   return (
@@ -172,12 +250,35 @@ export default function Workspace() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-              {/* Top: OCR Result */}
-              <div className="p-6 border-b border-slate-100 shrink-0">
+              <div className="px-6 pt-5 pb-4 border-b border-slate-100 shrink-0">
+                <div className="mb-4">
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">题目导航</h3>
+                  <ScrollArea className="w-full whitespace-nowrap">
+                    <div className="flex gap-2 pb-2">
+                      {paper.questions.map((question, index) => {
+                        const active = question.id === activeQuestionId;
+                        return (
+                          <button
+                            key={question.id}
+                            type="button"
+                            onClick={() => handleQuestionClick(question.id)}
+                            className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                              active
+                                ? "bg-indigo-600 text-white border-indigo-600"
+                                : "bg-white text-slate-700 border-slate-200 hover:border-indigo-300"
+                            }`}
+                          >
+                            第{index + 1}题
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                </div>
                 <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">识别结果</h3>
-                <div className="prose prose-sm max-w-none prose-slate bg-slate-50 p-4 rounded-lg border border-slate-100">
+                <div className="prose prose-sm max-w-none prose-slate bg-slate-50 p-4 rounded-lg border border-slate-100 whitespace-pre-wrap leading-7">
                   <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {activeQuestion.text}
+                    {displayQuestionText}
                   </ReactMarkdown>
                 </div>
 
@@ -197,7 +298,46 @@ export default function Workspace() {
                 </div>
               </div>
 
-              {/* Bottom: Chat Area (if open) */}
+              {activeInsightTab && (
+                <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant={activeInsightTab === "knowledge" ? "default" : "outline"}
+                        onClick={() => handleAction("knowledge")}
+                      >
+                        知识点
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={activeInsightTab === "similar" ? "default" : "outline"}
+                        onClick={() => handleAction("similar")}
+                      >
+                        相似题
+                      </Button>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => setActiveInsightTab(null)}>
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {insightLoading[activeInsightTab] && !displayedInsight?.content ? (
+                    <div className="flex items-center text-sm text-slate-500">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2 text-indigo-600" />
+                      正在生成内容...
+                    </div>
+                  ) : (
+                    <ScrollArea className="max-h-64">
+                      <div className="prose prose-sm prose-slate max-w-none pr-2 whitespace-pre-wrap leading-7">
+                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                          {displayedInsight?.content || "暂无内容"}
+                        </ReactMarkdown>
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              )}
+
               {isChatOpen && (
                 <div className="flex-1 flex flex-col bg-slate-50/50 overflow-hidden">
                   <div className="px-6 py-3 border-b border-slate-200 bg-white flex items-center justify-between shrink-0">
@@ -232,10 +372,10 @@ export default function Workspace() {
                             {msg.options && msg.options.length > 0 && (
                               <div className="mt-4 space-y-2">
                                 {msg.options.map((opt) => (
-                                  <Button 
-                                    key={opt.id} 
-                                    variant="outline" 
-                                    size="sm" 
+                                  <Button
+                                    key={opt.id}
+                                    variant="outline"
+                                    size="sm"
                                     className="w-full justify-start text-left h-auto py-2 px-3 whitespace-normal"
                                     onClick={() => handleSendMessage(opt.text)}
                                   >
@@ -262,7 +402,7 @@ export default function Workspace() {
 
                   <div className="p-4 bg-white border-t border-slate-200 shrink-0">
                     <div className="flex items-end space-x-2">
-                      <Textarea 
+                      <Textarea
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         placeholder="输入您的问题或想法..."
@@ -274,8 +414,8 @@ export default function Workspace() {
                           }
                         }}
                       />
-                      <Button 
-                        size="icon" 
+                      <Button
+                        size="icon"
                         className="h-[60px] w-[60px] shrink-0 rounded-xl"
                         onClick={() => handleSendMessage()}
                         disabled={!chatInput.trim() || isAiTyping}
@@ -290,29 +430,6 @@ export default function Workspace() {
           )}
         </ResizablePanel>
       </ResizablePanelGroup>
-
-      {/* Dialog for Knowledge / Similar Questions */}
-      <Dialog open={!!dialogContent} onOpenChange={(open) => !open && setDialogContent(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{dialogContent?.title}</DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="flex-1 mt-4">
-            {isDialogLoading ? (
-              <div className="flex flex-col items-center justify-center py-12 text-slate-500">
-                <Loader2 className="w-8 h-8 animate-spin mb-4 text-indigo-600" />
-                <p>正在生成内容...</p>
-              </div>
-            ) : (
-              <div className="prose prose-slate max-w-none pb-6">
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                  {dialogContent?.content || ""}
-                </ReactMarkdown>
-              </div>
-            )}
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

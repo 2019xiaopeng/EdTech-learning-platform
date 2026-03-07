@@ -18,10 +18,12 @@ function getClient() {
     throw new Error("未配置阿里云OCR访问密钥");
   }
   const region = process.env.ALIYUN_OCR_REGION || "cn-hangzhou";
+  const endpoint = process.env.ALIYUN_OCR_ENDPOINT || `ocr-api.${region}.aliyuncs.com`;
   const config = new Config({
     accessKeyId,
     accessKeySecret,
     regionId: region,
+    endpoint,
   });
   client = new OCRClient(config);
   return client;
@@ -145,7 +147,7 @@ function buildFallbackQuestions(segments: OcrSegment[]) {
   }));
 }
 
-export async function recognizeEduPaperCut(imageBase64: string, subject = "Math") {
+export async function recognizeEduPaperCut(imageBase64: string, subject = "Math", imageType: "scan" | "photo" = "photo") {
   const sdkClient = getClient();
   const { buffer, mimeType } = parseDataUrl(imageBase64);
   if (!mimeType.startsWith("image/")) {
@@ -153,7 +155,7 @@ export async function recognizeEduPaperCut(imageBase64: string, subject = "Math"
   }
   const request = new RecognizeEduPaperCutRequest({
     cutType: "question",
-    imageType: "photo",
+    imageType,
     outputOricoord: true,
     subject,
     body: Readable.from([buffer]),

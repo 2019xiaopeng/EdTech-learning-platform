@@ -29,7 +29,7 @@ export default function Home() {
       if (isPdf) {
         fileData = await convertPdfToImage(file);
       }
-      const result = await processPaper(fileData);
+      const result = await processPaper(fileData, isPdf ? "scan" : "photo");
       addPaper(result.paper);
       toast.success(`识别完成，共提取 ${result.paper.questions.length} 道题目`);
       router.push(`/workspace/${result.paper.id}`);

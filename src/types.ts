@@ -32,6 +32,13 @@ export interface ChatMessage {
   options?: ChatOption[];
 }
 
+export type InsightKind = "knowledge" | "similar";
+
+export interface InsightState {
+  content: string;
+  updatedAt: number;
+}
+
 export interface Paper {
   id: string;
   imageUrl: string;
