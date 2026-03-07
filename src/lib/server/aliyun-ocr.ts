@@ -44,7 +44,7 @@ function asNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizePos(source: AnyRecord): Point[] {
+function extractPoints(source: AnyRecord): Point[] {
   const posCandidate = source.pos;
   if (Array.isArray(posCandidate) && posCandidate.length > 0) {
     const points = posCandidate
@@ -65,16 +65,7 @@ function normalizePos(source: AnyRecord): Point[] {
       return points.slice(0, 4);
     }
   }
-  const box = normalizeBox(source);
-  if (!box) {
-    return [];
-  }
-  return [
-    { x: box.xmin, y: box.ymin },
-    { x: box.xmax, y: box.ymin },
-    { x: box.xmax, y: box.ymax },
-    { x: box.xmin, y: box.ymax },
-  ];
+  return [];
 }
 
 function normalizeBox(source: AnyRecord): BoundingBox | null {
@@ -97,7 +88,7 @@ function normalizeBox(source: AnyRecord): BoundingBox | null {
       ymax: centerY + height / 2,
     };
   }
-  const points = normalizePos(source);
+  const points = extractPoints(source);
   if (points.length > 0) {
     const xs = points.map((point) => point.x);
     const ys = points.map((point) => point.y);
@@ -109,6 +100,23 @@ function normalizeBox(source: AnyRecord): BoundingBox | null {
     };
   }
   return null;
+}
+
+function normalizePos(source: AnyRecord): Point[] {
+  const points = extractPoints(source);
+  if (points.length > 0) {
+    return points;
+  }
+  const box = normalizeBox(source);
+  if (!box) {
+    return [];
+  }
+  return [
+    { x: box.xmin, y: box.ymin },
+    { x: box.xmax, y: box.ymin },
+    { x: box.xmax, y: box.ymax },
+    { x: box.xmin, y: box.ymax },
+  ];
 }
 
 function parseOcrPayload(raw: string) {
