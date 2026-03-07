@@ -11,18 +11,22 @@ export default function Home() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const { addPaper, setProcessing, setGlobalError } = useWorkspaceStore();
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const handleFileUpload = async (file: File) => {
+    const isPdf = file.type === "application/pdf";
+    const isImage = file.type.startsWith("image/");
+    if (!isPdf && !isImage) {
+      toast.error("仅支持 PDF 或图片文件");
+      return;
+    }
     setIsUploading(true);
     setProcessing(true);
     setGlobalError(null);
     try {
       let fileData: File | string = file;
-      if (file.type === "application/pdf") {
+      if (isPdf) {
         fileData = await convertPdfToImage(file);
       }
       const result = await processPaper(fileData);
@@ -39,6 +43,37 @@ export default function Home() {
     }
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleFileUpload(file);
+    e.target.value = "";
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isUploading) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await handleFileUpload(file);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white px-4 py-8">
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col justify-center gap-8">
@@ -48,13 +83,15 @@ export default function Home() {
             AI EdTech Learning Platform
           </p>
           <h1 className="text-4xl font-semibold tracking-tight text-slate-900">试卷分析与学习</h1>
-          <p className="mx-auto max-w-2xl text-sm text-slate-500">
-            上传试卷后，系统将通过阿里云OCR完成切题识别，并由DeepSeek进行结构化分析与辅导交互。
-          </p>
         </div>
         <div
-          className="cursor-pointer rounded-3xl border border-dashed border-slate-300 bg-white p-14 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
+          className={`cursor-pointer rounded-3xl border border-dashed bg-white p-14 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
+            isDragging ? "border-indigo-500 bg-indigo-50/40 shadow-md" : "border-slate-300 hover:border-indigo-300"
+          }`}
           onClick={() => !isUploading && fileInputRef.current?.click()}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="rounded-2xl bg-slate-100 p-4">
@@ -65,7 +102,7 @@ export default function Home() {
               )}
             </div>
             <div className="text-base font-medium text-slate-800">
-              {isUploading ? "正在处理试卷..." : "点击上传试卷（支持 PDF / 图片）"}
+              {isUploading ? "正在处理试卷..." : isDragging ? "松开以上传文件" : "点击或拖拽上传试卷（支持 PDF / 图片）"}
             </div>
             <div className="text-sm text-slate-500">
               上传后自动完成切题识别、题目结构化与学习工作台初始化

@@ -1,7 +1,11 @@
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
-// Set worker source
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+    import.meta.url
+  ).toString();
+}
 
 export async function convertPdfToImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
