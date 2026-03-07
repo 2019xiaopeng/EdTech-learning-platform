@@ -55,7 +55,7 @@ src/
 DEEPSEEK_API_KEY=your_deepseek_api_key
 ALIYUN_OCR_ACCESS_KEY_ID=your_access_key_id
 ALIYUN_OCR_ACCESS_KEY_SECRET=your_access_key_secret
-ALIYUN_OCR_REGION=cn-shanghai
+ALIYUN_OCR_REGION=cn-hangzhou
 ```
 
 说明：

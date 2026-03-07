@@ -14,18 +14,16 @@ function getClient() {
   }
   const accessKeyId = process.env.ALIYUN_OCR_ACCESS_KEY_ID;
   const accessKeySecret = process.env.ALIYUN_OCR_ACCESS_KEY_SECRET;
-  const region = process.env.ALIYUN_OCR_REGION || "cn-shanghai";
   if (!accessKeyId || !accessKeySecret) {
     throw new Error("未配置阿里云OCR访问密钥");
   }
-  client = new OCRClient(
-    new Config({
-      accessKeyId,
-      accessKeySecret,
-      endpoint: `ocr-api.${region}.aliyuncs.com`,
-      regionId: region,
-    })
-  );
+  const region = process.env.ALIYUN_OCR_REGION || "cn-hangzhou";
+  const config = new Config({
+    accessKeyId,
+    accessKeySecret,
+    regionId: region,
+  });
+  client = new OCRClient(config);
   return client;
 }
 
@@ -64,6 +62,33 @@ function normalizeBox(source: AnyRecord): BoundingBox | null {
       ymax: centerY + height / 2,
     };
   }
+  const posCandidate = source.pos;
+  if (Array.isArray(posCandidate) && posCandidate.length > 0) {
+    const points = posCandidate
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const record = item as AnyRecord;
+        const x = asNumber(record.x);
+        const y = asNumber(record.y);
+        if (x === null || y === null) {
+          return null;
+        }
+        return { x, y };
+      })
+      .filter((item): item is { x: number; y: number } => item !== null);
+    if (points.length > 0) {
+      const xs = points.map((point) => point.x);
+      const ys = points.map((point) => point.y);
+      return {
+        xmin: Math.min(...xs),
+        xmax: Math.max(...xs),
+        ymin: Math.min(...ys),
+        ymax: Math.max(...ys),
+      };
+    }
+  }
   return null;
 }
 
@@ -93,7 +118,7 @@ function extractSegments(payload: unknown) {
       continue;
     }
     const record = current as AnyRecord;
-    const textCandidate = record.text ?? record.content ?? record.value ?? record.question;
+    const textCandidate = record.text ?? record.word ?? record.content ?? record.value ?? record.question;
     const box = normalizeBox(record);
     if (typeof textCandidate === "string" && textCandidate.trim() && box) {
       segments.push({

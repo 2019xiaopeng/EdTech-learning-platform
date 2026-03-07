@@ -11,7 +11,7 @@ type DeepSeekResponse = {
 };
 
 function getApiKey() {
-  const key = process.env.DEEPSEEK_API_KEY || process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
+  const key = process.env.DEEPSEEK_API_KEY;
   if (!key) {
     throw new Error("未配置 DEEPSEEK_API_KEY");
   }
