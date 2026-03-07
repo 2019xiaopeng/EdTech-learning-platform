@@ -1,3 +1,8 @@
+export interface Point {
+  x: number;
+  y: number;
+}
+
 export interface BoundingBox {
   ymin: number;
   xmin: number;
@@ -8,14 +13,23 @@ export interface BoundingBox {
 export interface OcrSegment {
   id: string;
   text: string;
+  content?: string;
   box: BoundingBox;
+  pos: Point[];
   confidence?: number;
 }
 
 export interface Question {
-  id: string;
-  text: string;
-  box: BoundingBox;
+  id: string | number;
+  type: string;
+  content: string;
+  options?: string[];
+  subQuestions?: { id: string; content: string }[];
+  pos: Point[];
+  knowledgeCache?: string;
+  similarCache?: string;
+  text?: string;
+  box?: BoundingBox;
   source?: "ocr" | "deepseek";
   confidence?: number;
 }

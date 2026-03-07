@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { Paper, ChatMessage, InsightKind, InsightState } from "../types";
+import { Paper, ChatMessage, InsightKind, InsightState, Question } from "../types";
 
 interface WorkspaceState {
   papers: Record<string, Paper>;
@@ -9,6 +9,7 @@ interface WorkspaceState {
   chatHistory: Record<string, ChatMessage[]>;
   insightCache: Record<string, InsightState>;
   isProcessing: boolean;
+  processStep: string;
   globalError: string | null;
 
   addPaper: (paper: Paper) => void;
@@ -20,6 +21,7 @@ interface WorkspaceState {
   clearChatHistory: (paperId: string, questionId: string) => void;
   setInsightCache: (paperId: string, questionId: string, kind: InsightKind, content: string) => void;
   getInsightCache: (paperId: string, questionId: string, kind: InsightKind) => InsightState | null;
+  setProcessStep: (step: string) => void;
   setProcessing: (value: boolean) => void;
   setGlobalError: (message: string | null) => void;
 }
@@ -32,6 +34,24 @@ function buildInsightKey(paperId: string, questionId: string, kind: InsightKind)
   return `${paperId}:${questionId}:${kind}`;
 }
 
+function normalizeQuestion(question: Question): Question {
+  const fallbackPos = question.box
+    ? [
+        { x: question.box.xmin, y: question.box.ymin },
+        { x: question.box.xmax, y: question.box.ymin },
+        { x: question.box.xmax, y: question.box.ymax },
+        { x: question.box.xmin, y: question.box.ymax },
+      ]
+    : [];
+  return {
+    ...question,
+    id: question.id,
+    type: question.type || "未知题型",
+    content: question.content || question.text || "",
+    pos: question.pos?.length ? question.pos : fallbackPos,
+  };
+}
+
 export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
@@ -41,29 +61,34 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       chatHistory: {},
       insightCache: {},
       isProcessing: false,
+      processStep: "",
       globalError: null,
 
       addPaper: (paper) =>
         set((state) => {
+          const normalizedPaper: Paper = {
+            ...paper,
+            questions: paper.questions.map((question) => normalizeQuestion(question)),
+          };
           const nextQuestionId = paper.questions[0]?.id ?? null;
           return {
-            papers: { ...state.papers, [paper.id]: paper },
-            activePaperId: paper.id,
+            papers: { ...state.papers, [paper.id]: normalizedPaper },
+            activePaperId: normalizedPaper.id,
             activeQuestionByPaper: {
               ...state.activeQuestionByPaper,
-              [paper.id]: nextQuestionId,
+              [normalizedPaper.id]: nextQuestionId ? String(nextQuestionId) : null,
             },
           };
         }),
 
       setActivePaper: (id) =>
         set((state) => {
-          const firstQuestionId = state.papers[id]?.questions[0]?.id ?? null;
+          const firstQuestionId = state.papers[id]?.questions[0]?.id;
           return {
             activePaperId: id,
             activeQuestionByPaper: {
               ...state.activeQuestionByPaper,
-              [id]: state.activeQuestionByPaper[id] ?? firstQuestionId,
+              [id]: state.activeQuestionByPaper[id] ?? (firstQuestionId ? String(firstQuestionId) : null),
             },
           };
         }),
@@ -84,7 +109,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           if (!paper) return state;
 
           const updatedQuestions = paper.questions.map((q) =>
-            q.id === questionId ? { ...q, text } : q
+            String(q.id) === questionId ? { ...q, text, content: text } : q
           );
 
           return {
@@ -118,7 +143,28 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       setInsightCache: (paperId, questionId, kind, content) =>
         set((state) => {
           const key = buildInsightKey(paperId, questionId, kind);
+          const paper = state.papers[paperId];
+          const updatedQuestions = paper
+            ? paper.questions.map((question) =>
+                String(question.id) === questionId
+                  ? {
+                      ...question,
+                      knowledgeCache: kind === "knowledge" ? content : question.knowledgeCache,
+                      similarCache: kind === "similar" ? content : question.similarCache,
+                    }
+                  : question
+              )
+            : null;
           return {
+            papers: paper
+              ? {
+                  ...state.papers,
+                  [paperId]: {
+                    ...paper,
+                    questions: updatedQuestions || paper.questions,
+                  },
+                }
+              : state.papers,
             insightCache: {
               ...state.insightCache,
               [key]: {
@@ -135,6 +181,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       setProcessing: (value) => set({ isProcessing: value }),
+      setProcessStep: (step) => set({ processStep: step }),
       setGlobalError: (message) => set({ globalError: message }),
     }),
     {
@@ -145,6 +192,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         activeQuestionByPaper: state.activeQuestionByPaper,
         chatHistory: state.chatHistory,
         insightCache: state.insightCache,
+        processStep: state.processStep,
       }),
     }
   )

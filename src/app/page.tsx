@@ -12,7 +12,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const { addPaper, setProcessing, setGlobalError } = useWorkspaceStore();
+  const { addPaper, isProcessing, processStep, setProcessing, setProcessStep, setGlobalError } = useWorkspaceStore();
 
   const handleFileUpload = async (file: File) => {
     const isPdf = file.type === "application/pdf";
@@ -23,13 +23,14 @@ export default function Home() {
     }
     setIsUploading(true);
     setProcessing(true);
+    setProcessStep("OCR扫描中...");
     setGlobalError(null);
     try {
       let fileData: File | string = file;
       if (isPdf) {
         fileData = await convertPdfToImage(file);
       }
-      const result = await processPaper(fileData, isPdf ? "scan" : "photo");
+      const result = await processPaper(fileData, isPdf ? "scan" : "photo", setProcessStep);
       addPaper(result.paper);
       toast.success(`识别完成，共提取 ${result.paper.questions.length} 道题目`);
       router.push(`/workspace/${result.paper.id}`);
@@ -40,6 +41,7 @@ export default function Home() {
     } finally {
       setIsUploading(false);
       setProcessing(false);
+      setProcessStep("");
     }
   };
 
@@ -134,6 +136,19 @@ export default function Home() {
           onChange={handleFileChange}
         />
       </div>
+      {isProcessing && (
+        <div className="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-sm flex items-center justify-center">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl border border-slate-200">
+            <div className="flex items-center">
+              <Loader2 className="h-5 w-5 animate-spin text-indigo-600 mr-3" />
+              <div className="text-sm font-medium text-slate-800">{processStep || "正在处理试卷..."}</div>
+            </div>
+            <div className="mt-4 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-indigo-500 animate-pulse" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

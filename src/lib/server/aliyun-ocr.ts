@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import OCRClient, { RecognizeEduPaperCutRequest } from "@alicloud/ocr-api20210707";
 import { Config } from "@alicloud/openapi-client";
-import { BoundingBox, OcrSegment, Question } from "@/types";
+import { BoundingBox, OcrSegment, Point, Question } from "@/types";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -44,6 +44,39 @@ function asNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizePos(source: AnyRecord): Point[] {
+  const posCandidate = source.pos;
+  if (Array.isArray(posCandidate) && posCandidate.length > 0) {
+    const points = posCandidate
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const record = item as AnyRecord;
+        const x = asNumber(record.x);
+        const y = asNumber(record.y);
+        if (x === null || y === null) {
+          return null;
+        }
+        return { x, y };
+      })
+      .filter((item): item is Point => item !== null);
+    if (points.length >= 4) {
+      return points.slice(0, 4);
+    }
+  }
+  const box = normalizeBox(source);
+  if (!box) {
+    return [];
+  }
+  return [
+    { x: box.xmin, y: box.ymin },
+    { x: box.xmax, y: box.ymin },
+    { x: box.xmax, y: box.ymax },
+    { x: box.xmin, y: box.ymax },
+  ];
+}
+
 function normalizeBox(source: AnyRecord): BoundingBox | null {
   const ymin = asNumber(source.ymin ?? source.top ?? source.yMin);
   const xmin = asNumber(source.xmin ?? source.left ?? source.xMin);
@@ -64,32 +97,16 @@ function normalizeBox(source: AnyRecord): BoundingBox | null {
       ymax: centerY + height / 2,
     };
   }
-  const posCandidate = source.pos;
-  if (Array.isArray(posCandidate) && posCandidate.length > 0) {
-    const points = posCandidate
-      .map((item) => {
-        if (!item || typeof item !== "object") {
-          return null;
-        }
-        const record = item as AnyRecord;
-        const x = asNumber(record.x);
-        const y = asNumber(record.y);
-        if (x === null || y === null) {
-          return null;
-        }
-        return { x, y };
-      })
-      .filter((item): item is { x: number; y: number } => item !== null);
-    if (points.length > 0) {
-      const xs = points.map((point) => point.x);
-      const ys = points.map((point) => point.y);
-      return {
-        xmin: Math.min(...xs),
-        xmax: Math.max(...xs),
-        ymin: Math.min(...ys),
-        ymax: Math.max(...ys),
-      };
-    }
+  const points = normalizePos(source);
+  if (points.length > 0) {
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    return {
+      xmin: Math.min(...xs),
+      xmax: Math.max(...xs),
+      ymin: Math.min(...ys),
+      ymax: Math.max(...ys),
+    };
   }
   return null;
 }
@@ -121,11 +138,14 @@ function extractSegments(payload: unknown) {
     }
     const record = current as AnyRecord;
     const textCandidate = record.text ?? record.word ?? record.content ?? record.value ?? record.question;
+    const pos = normalizePos(record);
     const box = normalizeBox(record);
-    if (typeof textCandidate === "string" && textCandidate.trim() && box) {
+    if (typeof textCandidate === "string" && textCandidate.trim() && box && pos.length > 0) {
       segments.push({
         id: randomUUID(),
         text: textCandidate.trim(),
+        content: textCandidate.trim(),
+        pos,
         box,
         confidence: asNumber(record.confidence) ?? undefined,
       });
@@ -140,6 +160,9 @@ function extractSegments(payload: unknown) {
 function buildFallbackQuestions(segments: OcrSegment[]) {
   return segments.map<Question>((segment, index) => ({
     id: `q-${index + 1}`,
+    type: "未知题型",
+    content: segment.content || segment.text,
+    pos: segment.pos,
     text: segment.text,
     box: segment.box,
     source: "ocr",

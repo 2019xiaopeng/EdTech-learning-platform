@@ -52,44 +52,88 @@ export async function callDeepSeek(messages: Message[], model = "deepseek-ai/Dee
 export async function structureQuestionsFromSegments(segments: OcrSegment[]) {
   const compactSegments = segments.map((item, index) => ({
     index: index + 1,
-    text: item.text,
-    box: item.box,
+    content: item.content || item.text,
+    pos: item.pos,
     confidence: item.confidence ?? null,
   }));
   const content = await callDeepSeek(
     [
       {
         role: "system",
-        content:
-          "你是试卷结构化助手。你必须输出严格JSON数组，每项包含id,text,box(ymin,xmin,ymax,xmax),confidence。不要包含任何额外文本。",
+        content: `你是一个专业的教育数据结构化助手。请对传入的试卷文本内容执行以下步骤：
+
+识别并分离独立的题目。
+
+判断题型（选择题、填空题、解答题等）。
+
+提取内容：若是选择题，务必分离出题干和选项 (A, B, C, D) 存入 options 数组。
+
+严格返回干净的 JSON 格式（不要 Markdown 标记），包含字段：id, type, content, options, subQuestions。保留原文本的 LaTeX 公式语法（使用 $ 或 $$ 包裹）。
+你必须同时返回 sourceIndexes 字段（数字数组）表示该题来自哪些OCR分段索引，用于坐标透传。`,
       },
       {
         role: "user",
-        content: `请把以下OCR片段整理成题目数组，尽量合并同题分段：${JSON.stringify(compactSegments)}`,
+        content: `OCR分段如下（每段都有index和pos坐标）：${JSON.stringify(compactSegments)}。请输出JSON数组。`,
       },
     ],
     "deepseek-ai/DeepSeek-V3",
     0.1
   );
-  const parsed = parseJsonBlock<Array<{ id?: string; text?: string; box?: Question["box"]; confidence?: number }>>(content);
+  const parsed = parseJsonBlock<
+    Array<{
+      id?: string | number;
+      type?: string;
+      content?: string;
+      options?: string[];
+      subQuestions?: Array<{ id?: string | number; content?: string }>;
+      sourceIndexes?: number[];
+    }>
+  >(content);
   if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
     return segments.map<Question>((segment, index) => ({
       id: `q-${index + 1}`,
-      text: segment.text,
+      type: "未知题型",
+      content: segment.content || segment.text,
+      pos: segment.pos,
+      text: segment.content || segment.text,
       box: segment.box,
       confidence: segment.confidence,
       source: "ocr",
     }));
   }
+  const indexMap = new Map<number, OcrSegment>();
+  segments.forEach((segment, index) => {
+    indexMap.set(index + 1, segment);
+  });
   return parsed
-    .filter((item) => item?.text && item?.box)
-    .map<Question>((item, index) => ({
-      id: item.id || `q-${index + 1}`,
-      text: item.text || "",
-      box: item.box as Question["box"],
-      confidence: item.confidence,
-      source: "deepseek",
-    }));
+    .filter((item) => item?.content)
+    .map<Question>((item, index) => {
+      const candidatePos = (item.sourceIndexes || [])
+        .map((sourceIndex) => indexMap.get(sourceIndex))
+        .filter((segment): segment is OcrSegment => Boolean(segment))
+        .flatMap((segment) => segment.pos);
+      const fallbackPos = indexMap.get(index + 1)?.pos || [];
+      const finalPos = candidatePos.length > 0 ? candidatePos : fallbackPos;
+      return {
+        id: item.id || `q-${index + 1}`,
+        type: item.type || "未知题型",
+        content: item.content || "",
+        options: Array.isArray(item.options) ? item.options.filter((option) => typeof option === "string" && option.trim()) : undefined,
+        subQuestions: Array.isArray(item.subQuestions)
+          ? item.subQuestions
+              .filter((sub) => sub?.content)
+              .map((sub, subIndex) => ({
+                id: String(sub.id || `${index + 1}-${subIndex + 1}`),
+                content: String(sub.content || ""),
+              }))
+          : undefined,
+        pos: finalPos,
+        text: item.content || "",
+        box: undefined,
+        confidence: undefined,
+        source: "deepseek",
+      };
+    });
 }
 
 export async function buildTutorReply(questionText: string, history: ChatMessage[], userMessage: string) {
