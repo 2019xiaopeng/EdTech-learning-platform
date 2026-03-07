@@ -22,6 +22,28 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
+function parseContentPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+  const content = (payload as { content?: unknown }).content;
+  if (typeof content === "string" && content.trim()) {
+    return content;
+  }
+  const text = (payload as { text?: unknown }).text;
+  if (typeof text === "string" && text.trim()) {
+    return text;
+  }
+  const data = (payload as { data?: { content?: unknown; text?: unknown } }).data;
+  if (typeof data?.content === "string" && data.content.trim()) {
+    return data.content;
+  }
+  if (typeof data?.text === "string" && data.text.trim()) {
+    return data.text;
+  }
+  return "";
+}
+
 const aiControllers: Record<AiChannel, AbortController | null> = {
   chat: null,
   knowledge: null,
@@ -143,8 +165,12 @@ export async function generateSimilarQuestions(questionText: string, signal?: Ab
     body: JSON.stringify({ questionText }),
     signal,
   });
-  const payload = await parseResponse<{ content: string }>(response);
-  return payload.content;
+  const payload = await parseResponse<unknown>(response);
+  const content = parseContentPayload(payload);
+  if (!content) {
+    throw new Error("相似题接口返回为空");
+  }
+  return content;
 }
 
 export async function generateSimilarQuestionsWithAbort(questionText: string, cache?: string) {
@@ -163,8 +189,12 @@ export async function generateKnowledgeExplanation(questionText: string, signal?
     body: JSON.stringify({ questionText }),
     signal,
   });
-  const payload = await parseResponse<{ content: string }>(response);
-  return payload.content;
+  const payload = await parseResponse<unknown>(response);
+  const content = parseContentPayload(payload);
+  if (!content) {
+    throw new Error("知识点接口返回为空");
+  }
+  return content;
 }
 
 export async function generateKnowledgeExplanationWithAbort(questionText: string, cache?: string) {

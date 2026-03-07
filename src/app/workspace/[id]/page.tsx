@@ -124,15 +124,22 @@ export default function Workspace() {
     }
   };
 
+  const handleOptionSelect = (label: string) => {
+    setIsChatOpen(true);
+    void handleSendMessage(`我选 ${label}`);
+  };
+
   const handleAction = async (type: InsightKind) => {
     if (!activeQuestion) return;
     setActiveInsightTab(type);
+    setInsightLoading((prev) => ({ ...prev, [type]: true }));
     const cacheFromQuestion = type === "knowledge" ? activeQuestion.knowledgeCache : activeQuestion.similarCache;
     const cached = getInsightCache(id, String(activeQuestion.id), type);
     if (cached || cacheFromQuestion) {
       if (!cached && cacheFromQuestion) {
         setInsightCache(id, String(activeQuestion.id), type, cacheFromQuestion);
       }
+      setInsightLoading((prev) => ({ ...prev, [type]: false }));
       return;
     }
     if (type === "knowledge") {
@@ -140,7 +147,6 @@ export default function Workspace() {
     } else {
       abortAiRequest("knowledge");
     }
-    setInsightLoading((prev) => ({ ...prev, [type]: true }));
     try {
       const result =
         type === "knowledge"
@@ -158,8 +164,8 @@ export default function Workspace() {
     }
   };
   const boundsList = paper.questions.map((question) => getQuestionBounds(question));
-  const maxX = Math.max(imageNaturalSize.width, ...boundsList.map((box) => box.xmax), 1000);
-  const maxY = Math.max(imageNaturalSize.height, ...boundsList.map((box) => box.ymax), 1000);
+  const originalImageWidth = imageNaturalSize.width || Math.max(...boundsList.map((box) => box.xmax), 1);
+  const originalImageHeight = imageNaturalSize.height || Math.max(...boundsList.map((box) => box.ymax), 1);
 
   return (
     <div className="h-screen w-full flex flex-col bg-gradient-to-b from-slate-50 to-white">
@@ -177,12 +183,12 @@ export default function Workspace() {
             <CardHeader className="py-3 px-4 border-b border-slate-100 bg-slate-50/50">
               <CardTitle className="text-sm font-medium text-slate-700">原卷展示</CardTitle>
             </CardHeader>
-            <div className="flex-1 relative overflow-auto bg-slate-200/50 p-4 flex items-center justify-center">
-              <div className="relative inline-block shadow-md bg-white">
+            <div className="flex-1 relative overflow-auto bg-slate-200/50 p-4 flex items-start justify-center">
+              <div className="relative w-full shadow-md bg-white">
                 <img
                   src={paper.imageUrl}
                   alt="Paper"
-                  className="max-w-full h-auto block"
+                  className="w-full h-auto object-contain block"
                   onLoad={(event) =>
                     setImageNaturalSize({
                       width: event.currentTarget.naturalWidth || 0,
@@ -203,10 +209,10 @@ export default function Workspace() {
                           : "border-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
                       }`}
                       style={{
-                        top: `${(box.ymin / maxY) * 100}%`,
-                        left: `${(box.xmin / maxX) * 100}%`,
-                        height: `${((box.ymax - box.ymin) / maxY) * 100}%`,
-                        width: `${((box.xmax - box.xmin) / maxX) * 100}%`,
+                        top: `${(box.ymin / originalImageHeight) * 100}%`,
+                        left: `${(box.xmin / originalImageWidth) * 100}%`,
+                        height: `${((box.ymax - box.ymin) / originalImageHeight) * 100}%`,
+                        width: `${((box.xmax - box.xmin) / originalImageWidth) * 100}%`,
                       }}
                     >
                       {isActive && (
@@ -238,7 +244,7 @@ export default function Workspace() {
                 <div className="flex-1 flex flex-col h-full overflow-hidden">
                   <div className="px-6 pt-5 pb-4 border-b border-slate-100 shrink-0">
                     <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">识别结果</h3>
-                    <QuestionRenderer question={activeQuestion} />
+                    <QuestionRenderer question={activeQuestion} onOptionSelect={handleOptionSelect} />
                     <div className="grid grid-cols-3 gap-3 mt-6">
                       <Button variant="outline" className="w-full" onClick={() => handleAction("knowledge")}>
                         <BookOpen className="w-4 h-4 mr-2 text-indigo-600" />
@@ -303,7 +309,7 @@ export default function Workspace() {
                   )}
 
                   {isChatOpen && (
-                    <div className="flex-1 flex flex-col bg-slate-50/50 overflow-hidden">
+                    <div className="flex flex-col h-full bg-slate-50/50 overflow-hidden">
                       <div className="px-6 py-3 border-b border-slate-200 bg-white flex items-center justify-between shrink-0">
                         <h3 className="font-medium flex items-center">
                           <MessageCircle className="w-4 h-4 mr-2 text-indigo-600" />
@@ -311,8 +317,8 @@ export default function Workspace() {
                         </h3>
                       </div>
 
-                      <ScrollArea className="flex-1 p-6">
-                        <div className="space-y-6">
+                      <div className="flex-1 overflow-y-auto p-4">
+                        <div className="space-y-6 px-2">
                           {currentChat.length === 0 && (
                             <div className="text-center text-slate-500 text-sm py-8">
                               发送消息开始苏格拉底式的探讨吧。
@@ -365,7 +371,7 @@ export default function Workspace() {
                             </div>
                           )}
                         </div>
-                      </ScrollArea>
+                      </div>
 
                       <div className="p-4 bg-white border-t border-slate-200 shrink-0">
                         <div className="flex items-end space-x-2">

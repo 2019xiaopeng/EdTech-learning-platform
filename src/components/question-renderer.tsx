@@ -14,9 +14,10 @@ function splitOptionText(option: string, index: number) {
 
 interface QuestionRendererProps {
   question: Question;
+  onOptionSelect?: (label: string, optionContent: string) => void;
 }
 
-export function QuestionRenderer({ question }: QuestionRendererProps) {
+export function QuestionRenderer({ question, onOptionSelect }: QuestionRendererProps) {
   const content = question.content || question.text || "";
   const options = Array.isArray(question.options) ? question.options : [];
   const isChoiceQuestion = question.type.includes("选择") && options.length > 0;
@@ -33,6 +34,7 @@ export function QuestionRenderer({ question }: QuestionRendererProps) {
               <Card
                 key={`${parsed.label}-${index}`}
                 className="cursor-pointer border-slate-200 p-3 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                onClick={() => onOptionSelect?.(parsed.label, parsed.content)}
               >
                 <div className="mb-1 text-xs font-semibold text-indigo-600">{parsed.label}</div>
                 <MarkdownRenderer content={parsed.content} className="prose prose-sm max-w-none prose-slate whitespace-pre-wrap leading-6" />

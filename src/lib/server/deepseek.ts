@@ -28,7 +28,7 @@ function parseJsonBlock<T>(content: string): T | null {
   }
 }
 
-export async function callDeepSeek(messages: Message[], model = "deepseek-ai/DeepSeek-V3", temperature = 0.3) {
+export async function callDeepSeek(messages: Message[], model = "DeepSeek-V3.2", temperature = 0.3) {
   const response = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -76,7 +76,7 @@ export async function structureQuestionsFromSegments(segments: OcrSegment[]) {
         content: `OCR分段如下（每段都有index和pos坐标）：${JSON.stringify(compactSegments)}。请输出JSON数组。`,
       },
     ],
-    "deepseek-ai/DeepSeek-V3",
+    "DeepSeek-V3.2",
     0.1
   );
   const parsed = parseJsonBlock<
@@ -142,15 +142,14 @@ export async function buildTutorReply(questionText: string, history: ChatMessage
     [
       {
         role: "system",
-        content:
-          "你是苏格拉底式数学导师。不要直接给最终答案。输出严格JSON对象，格式为{\"message\":\"...\",\"options\":[\"...\",\"...\"]}，options最多3项。",
+        content: `你是一位耐心且专业的 AI 导师。当前题目为：${questionText}。请采用启发式提问引导学生。但如果学生明确索要答案、表示完全听不懂，或者已经给出了自己的尝试，请温和地给出详细的步骤解析和最终答案。请使用清晰的排版。输出严格JSON对象，格式为{"message":"...","options":["...","..."]}，options最多3项。`,
       },
       {
         role: "user",
         content: `题目：${questionText}\n历史对话：${dialogHistory}\n学生最新输入：${userMessage}`,
       },
     ],
-    "deepseek-ai/DeepSeek-V3",
+    "DeepSeek-V3.2",
     0.5
   );
   const parsed = parseJsonBlock<{ message?: string; options?: string[] }>(content);
@@ -178,7 +177,7 @@ export async function buildKnowledgeAnswer(questionText: string) {
         content: `请讲解这道题的核心知识点：${questionText}`,
       },
     ],
-    "deepseek-ai/DeepSeek-R1",
+    "DeepSeek-V3.2",
     0.4
   );
 }
@@ -195,7 +194,7 @@ export async function buildSimilarQuestions(questionText: string) {
         content: `原题：${questionText}`,
       },
     ],
-    "deepseek-ai/DeepSeek-V3",
+    "DeepSeek-V3.2",
     0.6
   );
 }
