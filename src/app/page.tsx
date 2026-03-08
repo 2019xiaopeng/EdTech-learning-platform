@@ -1,18 +1,20 @@
 "use client";
 import React, { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, Loader2, FileText, Sparkles } from "lucide-react";
+import { Upload, Loader2, FileText, Sparkles, History, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceStore } from "@/store/useWorkspaceStore";
 import { processPaper } from "@/services/api";
 import { convertPdfToImage } from "@/lib/pdf";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const { addPaper, isProcessing, processStep, setProcessing, setProcessStep, setGlobalError } = useWorkspaceStore();
+  const { addPaper, historyPapers, restoreHistoryPaper, isProcessing, processStep, setProcessing, setProcessStep, setGlobalError } =
+    useWorkspaceStore();
 
   const handleFileUpload = async (file: File) => {
     const isPdf = file.type === "application/pdf";
@@ -31,6 +33,8 @@ export default function Home() {
         fileData = await convertPdfToImage(file);
       }
       const result = await processPaper(fileData, isPdf ? "scan" : "photo", setProcessStep);
+      result.paper.name = file.name;
+      result.paper.sourceUrl = typeof fileData === "string" ? fileData : result.paper.imageUrl;
       addPaper(result.paper);
       toast.success(`识别完成，共提取 ${result.paper.questions.length} 道题目`);
       router.push(`/workspace/${result.paper.id}`);
@@ -76,9 +80,18 @@ export default function Home() {
     await handleFileUpload(file);
   };
 
+  const handleOpenHistory = (recordId: string) => {
+    const restoredId = restoreHistoryPaper(recordId);
+    if (!restoredId) {
+      toast.error("历史记录恢复失败");
+      return;
+    }
+    router.push(`/workspace/${restoredId}`);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white px-4 py-8">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col justify-center gap-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col justify-center gap-8">
         <div className="space-y-4 text-center">
           <p className="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
             <Sparkles className="mr-1.5 h-3.5 w-3.5" />
@@ -127,6 +140,32 @@ export default function Home() {
             <h3 className="text-sm font-semibold text-slate-800">学习辅导</h3>
             <p className="mt-1 text-xs text-slate-500">知识点讲解、答疑对话、举一反三训练</p>
           </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center">
+            <History className="mr-2 h-4 w-4 text-slate-600" />
+            <h3 className="text-sm font-semibold text-slate-800">历史试卷</h3>
+          </div>
+          {historyPapers.length === 0 ? (
+            <div className="text-sm text-slate-500">暂无历史记录，上传后会自动保存到本地。</div>
+          ) : (
+            <div className="space-y-2">
+              {historyPapers.map((paper) => (
+                <div key={paper.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-800">{paper.name}</div>
+                    <div className="text-xs text-slate-500">
+                      {new Date(paper.date).toLocaleString()} · {paper.questions.length} 题
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => handleOpenHistory(paper.id)}>
+                    继续学习
+                    <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <input
           type="file"

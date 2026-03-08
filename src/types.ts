@@ -55,9 +55,29 @@ export interface InsightState {
 
 export interface Paper {
   id: string;
+  name?: string;
+  sourceUrl?: string;
   imageUrl: string;
   questions: Question[];
   createdAt: number;
+}
+
+export interface PaperRecord {
+  id: string;
+  name: string;
+  date: number;
+  questions: Question[];
+  sourceUrl: string;
+}
+
+export type ActivePanel = "analysis" | "chat" | "similar" | null;
+
+export interface SimilarExercise {
+  content: string;
+  type: string;
+  options?: string[];
+  answer: string;
+  analysis: string;
 }
 
 export interface UploadPaperResult {

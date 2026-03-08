@@ -1,11 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { Paper, ChatMessage, InsightKind, InsightState, Question } from "../types";
+import { ActivePanel, Paper, PaperRecord, ChatMessage, InsightKind, InsightState, Question } from "../types";
 
 interface WorkspaceState {
   papers: Record<string, Paper>;
+  historyPapers: PaperRecord[];
   activePaperId: string | null;
   activeQuestionByPaper: Record<string, string | null>;
+  activePanel: ActivePanel;
   chatHistory: Record<string, ChatMessage[]>;
   insightCache: Record<string, InsightState>;
   isProcessing: boolean;
@@ -13,6 +15,8 @@ interface WorkspaceState {
   globalError: string | null;
 
   addPaper: (paper: Paper) => void;
+  restoreHistoryPaper: (recordId: string) => string | null;
+  setActivePanel: (panel: ActivePanel) => void;
   setActivePaper: (id: string) => void;
   setActiveQuestion: (paperId: string, questionId: string | null) => void;
   getActiveQuestionId: (paperId: string) => string | null;
@@ -56,8 +60,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set, get) => ({
       papers: {},
+      historyPapers: [],
       activePaperId: null,
       activeQuestionByPaper: {},
+      activePanel: null,
       chatHistory: {},
       insightCache: {},
       isProcessing: false,
@@ -70,22 +76,65 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             ...paper,
             questions: paper.questions.map((question) => normalizeQuestion(question)),
           };
-          const nextQuestionId = paper.questions[0]?.id ?? null;
+          const nextQuestionId = normalizedPaper.questions[0]?.id ?? null;
+          const existingHistory = state.historyPapers.filter((record) => record.id !== normalizedPaper.id);
+          const nextRecord: PaperRecord = {
+            id: normalizedPaper.id,
+            name: normalizedPaper.name || `试卷 ${new Date(normalizedPaper.createdAt).toLocaleDateString()}`,
+            date: normalizedPaper.createdAt,
+            questions: normalizedPaper.questions,
+            sourceUrl: normalizedPaper.sourceUrl || normalizedPaper.imageUrl,
+          };
           return {
             papers: { ...state.papers, [paper.id]: normalizedPaper },
+            historyPapers: [nextRecord, ...existingHistory].slice(0, 30),
             activePaperId: normalizedPaper.id,
             activeQuestionByPaper: {
               ...state.activeQuestionByPaper,
               [normalizedPaper.id]: nextQuestionId ? String(nextQuestionId) : null,
             },
+            activePanel: null,
           };
         }),
+
+      restoreHistoryPaper: (recordId) => {
+        const record = get().historyPapers.find((item) => item.id === recordId);
+        if (!record) {
+          return null;
+        }
+        const restoredPaper: Paper = {
+          id: record.id,
+          name: record.name,
+          sourceUrl: record.sourceUrl,
+          imageUrl: record.sourceUrl,
+          questions: record.questions.map((question) => normalizeQuestion(question)),
+          createdAt: record.date,
+        };
+        const firstQuestionId = restoredPaper.questions[0]?.id;
+        set((state) => ({
+          papers: {
+            ...state.papers,
+            [restoredPaper.id]: restoredPaper,
+          },
+          activePaperId: restoredPaper.id,
+          activeQuestionByPaper: {
+            ...state.activeQuestionByPaper,
+            [restoredPaper.id]:
+              state.activeQuestionByPaper[restoredPaper.id] ?? (firstQuestionId ? String(firstQuestionId) : null),
+          },
+          activePanel: null,
+        }));
+        return restoredPaper.id;
+      },
+
+      setActivePanel: (panel) => set({ activePanel: panel }),
 
       setActivePaper: (id) =>
         set((state) => {
           const firstQuestionId = state.papers[id]?.questions[0]?.id;
           return {
             activePaperId: id,
+            activePanel: null,
             activeQuestionByPaper: {
               ...state.activeQuestionByPaper,
               [id]: state.activeQuestionByPaper[id] ?? (firstQuestionId ? String(firstQuestionId) : null),
@@ -95,6 +144,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       setActiveQuestion: (paperId, questionId) =>
         set((state) => ({
+          activePanel: null,
           activeQuestionByPaper: {
             ...state.activeQuestionByPaper,
             [paperId]: questionId,
@@ -188,6 +238,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       name: "workspace-store-v2",
       partialize: (state) => ({
         papers: state.papers,
+        historyPapers: state.historyPapers,
         activePaperId: state.activePaperId,
         activeQuestionByPaper: state.activeQuestionByPaper,
         chatHistory: state.chatHistory,

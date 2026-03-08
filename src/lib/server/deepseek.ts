@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { ChatMessage, ChatOption, OcrSegment, Question } from "@/types";
+import { ChatMessage, ChatOption, OcrSegment, Question, SimilarExercise } from "@/types";
 
 type Message = {
   role: "system" | "user" | "assistant";
@@ -18,6 +18,10 @@ function getApiKey() {
   return key;
 }
 
+function getModelId() {
+  return process.env.DEEPSEEK_MODEL || "deepseek-ai/DeepSeek-V3.2";
+}
+
 function parseJsonBlock<T>(content: string): T | null {
   const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i);
   const candidate = fenced ? fenced[1] : content;
@@ -28,7 +32,7 @@ function parseJsonBlock<T>(content: string): T | null {
   }
 }
 
-export async function callDeepSeek(messages: Message[], model = "DeepSeek-V3.2", temperature = 0.3) {
+export async function callDeepSeek(messages: Message[], model = getModelId(), temperature = 0.3) {
   const response = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -76,7 +80,7 @@ export async function structureQuestionsFromSegments(segments: OcrSegment[]) {
         content: `OCR分段如下（每段都有index和pos坐标）：${JSON.stringify(compactSegments)}。请输出JSON数组。`,
       },
     ],
-    "DeepSeek-V3.2",
+    getModelId(),
     0.1
   );
   const parsed = parseJsonBlock<
@@ -142,14 +146,14 @@ export async function buildTutorReply(questionText: string, history: ChatMessage
     [
       {
         role: "system",
-        content: `你是一位耐心且专业的 AI 导师。当前题目为：${questionText}。请采用启发式提问引导学生。但如果学生明确索要答案、表示完全听不懂，或者已经给出了自己的尝试，请温和地给出详细的步骤解析和最终答案。请使用清晰的排版。输出严格JSON对象，格式为{"message":"...","options":["...","..."]}，options最多3项。`,
+        content: `你是一位耐心且专业的 AI 导师。当前题目为：${questionText}。请采用启发式提问引导学生。但如果学生明确索要答案、表示完全听不懂，或者已经给出了自己的尝试，请温和地给出详细的步骤解析和最终答案。请使用清晰的排版。你必须主动开场：“针对这道题，你觉得应该从哪里入手呢？告诉我你的答案或思路。”。输出严格JSON对象，格式为{"message":"...","options":["...","..."]}，options最多3项。`,
       },
       {
         role: "user",
         content: `题目：${questionText}\n历史对话：${dialogHistory}\n学生最新输入：${userMessage}`,
       },
     ],
-    "DeepSeek-V3.2",
+    getModelId(),
     0.5
   );
   const parsed = parseJsonBlock<{ message?: string; options?: string[] }>(content);
@@ -177,24 +181,41 @@ export async function buildKnowledgeAnswer(questionText: string) {
         content: `请讲解这道题的核心知识点：${questionText}`,
       },
     ],
-    "DeepSeek-V3.2",
+    getModelId(),
     0.4
   );
 }
 
-export async function buildSimilarQuestions(questionText: string) {
-  return callDeepSeek(
+export async function buildSimilarExercise(questionText: string): Promise<SimilarExercise> {
+  const response = await callDeepSeek(
     [
       {
         role: "system",
-        content: "你是出题助手。生成2道同知识点变式题并给出详细解析。",
+        content:
+          "你是出题助手。请基于原题生成一道同知识点变式题，并严格返回JSON：{\"content\":\"新题目\",\"type\":\"选择题或填空题或解答题\",\"options\":[\"A...\",\"B...\"],\"answer\":\"标准答案\",\"analysis\":\"详细解析\"}。不要返回Markdown，不要返回额外文字。",
       },
       {
         role: "user",
         content: `原题：${questionText}`,
       },
     ],
-    "DeepSeek-V3.2",
+    getModelId(),
     0.6
   );
+  const parsed = parseJsonBlock<SimilarExercise>(response);
+  if (parsed?.content && parsed?.answer && parsed?.analysis) {
+    return {
+      content: parsed.content,
+      type: parsed.type || "解答题",
+      options: Array.isArray(parsed.options) ? parsed.options : undefined,
+      answer: parsed.answer,
+      analysis: parsed.analysis,
+    };
+  }
+  return {
+    content: response,
+    type: "解答题",
+    answer: "",
+    analysis: "请基于题目思路完成解答。",
+  };
 }

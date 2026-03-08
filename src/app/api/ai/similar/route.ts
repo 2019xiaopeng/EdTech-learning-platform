@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { buildSimilarQuestions } from "@/lib/server/deepseek";
+import { buildSimilarExercise } from "@/lib/server/deepseek";
 import { readAiCache, writeAiCache } from "@/lib/server/ai-cache";
+import { SimilarExercise } from "@/types";
 
 export async function POST(request: Request) {
   try {
@@ -11,11 +12,16 @@ export async function POST(request: Request) {
     }
     const cached = readAiCache("similar", questionText);
     if (cached) {
-      return NextResponse.json({ content: cached, cached: true });
+      try {
+        const parsed = JSON.parse(cached) as SimilarExercise;
+        return NextResponse.json({ ...parsed, cached: true });
+      } catch {
+        return NextResponse.json({ content: cached, type: "解答题", answer: "", analysis: "暂无解析", cached: true });
+      }
     }
-    const content = await buildSimilarQuestions(questionText);
-    writeAiCache("similar", questionText, content);
-    return NextResponse.json({ content, cached: false });
+    const exercise = await buildSimilarExercise(questionText);
+    writeAiCache("similar", questionText, JSON.stringify(exercise));
+    return NextResponse.json({ ...exercise, cached: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : "相似题目生成失败";
     return NextResponse.json({ error: message }, { status: 500 });

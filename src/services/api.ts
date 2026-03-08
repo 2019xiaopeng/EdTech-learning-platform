@@ -1,4 +1,4 @@
-import { ChatMessage, ChatOption, OcrSegment, ProcessPaperResult, Question } from "../types";
+import { ChatMessage, ChatOption, OcrSegment, ProcessPaperResult, Question, SimilarExercise } from "../types";
 type AiChannel = "chat" | "knowledge" | "similar";
 
 async function fileToDataUrl(file: File | string): Promise<string> {
@@ -158,28 +158,53 @@ export async function askAIWithAbort(
   return askAI(questionText, chatHistory, userMessage, signal);
 }
 
-export async function generateSimilarQuestions(questionText: string, signal?: AbortSignal): Promise<string> {
+export async function generateSimilarQuestions(questionText: string, signal?: AbortSignal): Promise<SimilarExercise> {
   const response = await fetch("/api/ai/similar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ questionText }),
     signal,
   });
-  const payload = await parseResponse<unknown>(response);
+  const payload = await parseResponse<{
+    content?: string;
+    type?: string;
+    options?: string[];
+    answer?: string;
+    analysis?: string;
+  }>(response);
   const content = parseContentPayload(payload);
   if (!content) {
     throw new Error("相似题接口返回为空");
   }
-  return content;
+  return {
+    content,
+    type: payload.type || "解答题",
+    options: Array.isArray(payload.options) ? payload.options : undefined,
+    answer: payload.answer || "",
+    analysis: payload.analysis || "暂无解析",
+  };
 }
 
 export async function generateSimilarQuestionsWithAbort(questionText: string, cache?: string) {
   if (cache?.trim()) {
-    return { content: cache, fromCache: true };
+    try {
+      const parsed = JSON.parse(cache) as SimilarExercise;
+      return { exercise: parsed, fromCache: true };
+    } catch {
+      return {
+        exercise: {
+          content: cache,
+          type: "解答题",
+          answer: "",
+          analysis: "暂无解析",
+        },
+        fromCache: true,
+      };
+    }
   }
   const signal = startAiRequest("similar");
-  const content = await generateSimilarQuestions(questionText, signal);
-  return { content, fromCache: false };
+  const exercise = await generateSimilarQuestions(questionText, signal);
+  return { exercise, fromCache: false };
 }
 
 export async function generateKnowledgeExplanation(questionText: string, signal?: AbortSignal): Promise<string> {
